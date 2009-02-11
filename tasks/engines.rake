@@ -250,3 +250,83 @@ Report any issues on http://dev.rails-engines.org. Thanks!
     Rake::Task["test:plugins"].prerequisites << "test:plugins:setup_plugin_fixtures"
   end
 end
+
+
+
+# Include engine plugins in your code statistics
+# rake stats:engines
+# First we have to tweak the CodeStatistics class
+
+require 'code_statistics'
+class CodeStatisticsWithEngines < CodeStatistics
+  
+  def initialize(*paths)
+    @paths      = paths # {:name, :path, :base}
+    @statistics = calculate_statistics
+    @total      = calculate_total if paths.length > 1
+  end
+    def to_s
+      print_header
+      @paths.group_by{|i| i[:base]}.each { |group|
+      unless group.first.blank?
+        puts "|-Engine #{group.first.sub('vendor/plugins/','').ljust(64,'-')}+"
+      end
+      group.last.each { |path| 
+        print_line(path[:name], @statistics[path[:path]]) 
+        }
+      }
+      print_splitter
+      
+      if @total
+        print_line("Total", @total)
+        print_splitter
+      end
+
+      print_code_test_stats
+    end
+    
+    private
+      def calculate_statistics
+        @paths.inject({}) { |stats, path| stats[path[:path]] = calculate_directory_statistics(path[:path]); stats }
+      end
+      TEST_TYPE_PATHS = %r%test/(integration|functional|unit)%
+      
+      # @statistics now hashed by 
+      def calculate_code
+        code_loc = 0
+        @statistics.each { |k, v| code_loc += v['codelines'] unless k =~ TEST_TYPE_PATHS }
+        code_loc
+      end
+
+      def calculate_tests
+        test_loc = 0
+        @statistics.each { |k, v| test_loc += v['codelines'] if k =~ TEST_TYPE_PATHS  }
+        test_loc
+      end
+end
+
+namespace :stats do
+  desc "Report code statistics (KLOCs, etc) from the application, including engines plugins"
+  task :engines do
+    
+    base_stats_directories = [
+      %w(Controllers        app/controllers),
+      %w(Helpers            app/helpers), 
+      %w(Models             app/models),
+      %w(Libraries          lib/),
+      %w(Integration\ tests test/integration),
+      %w(Functional\ tests  test/functional),
+      %w(Unit\ tests        test/unit)
+      ]
+      
+      engine_plugin_paths = Dir["vendor/plugins/*"].select{|dir| File.directory?("#{dir}/app")}
+      stats_directories = []
+      ([''] + engine_plugin_paths).each do |base_path|
+        stats_directories += base_stats_directories.collect { |name, dir| {:name => name, :path => "#{RAILS_ROOT}/#{base_path}/#{dir}".sub('//','/'), :base => base_path } }
+      end
+      
+      stats_directories.select { |item| File.directory?(item[:path]) }
+
+      CodeStatisticsWithEngines.new(*stats_directories).to_s
+    end
+  end
